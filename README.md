@@ -16,7 +16,7 @@ TODO
 
 Using lazy.nvim:
 
-```{lua}
+```lua
 {
 	"Smilenrjr/popterm-nvim"
 }
