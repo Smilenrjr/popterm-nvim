@@ -342,12 +342,6 @@ function Terminal:_send(cmd)
 		return
 	end
 
-	-- vim.fn.jobresize(
-	-- 	self.jobId,
-	-- 	vim.api.nvim_win_get_width(self.terminal_popup.winid),
-	-- 	vim.api.nvim_win_get_height(self.terminal_popup.winid)
-	-- )
-
 	-- clear terminal before every new command
 	-- vim.api.nvim_chan_send(self.jobId, "clear\r")
 	vim.api.nvim_chan_send(self.jobId, cmd .. "\r")
@@ -474,7 +468,6 @@ function M.setup(opts)
 	end, { nargs = 1, complete = 'shellcmd' })
 
 	vim.api.nvim_create_user_command('PoptermRemoveCommand', function(opt)
-		-- table.insert(terminal.menuItems, Menu.item(opt.args))
 		removeCommandList(opt.args)
 		terminal.menuItems = {}
 		readCommands(terminal.menuItems)
@@ -491,29 +484,6 @@ function M.setup(opts)
 	end
 
 	readCommands(terminal.menuItems)
-
-	-- local lookup = {}
-	-- local function addUnique(value)
-	-- 	if not lookup[value] then
-	-- 		table.insert(terminal.menuItems, Menu.item(value))
-	-- 		lookup[value] = true
-	-- 	end
-	-- end
-
-	-- local ok, lines = pcall(vim.fn.readfile, historyPath)
-	-- if ok or #lines ~= 0 then
-	-- 	local data = vim.json.decode(lines[1]) or {}
-	-- 	for cwd, cmdInfo in pairs(data) do
-	-- 		if cmdInfo and cmdInfo.cmd then
-	-- 			-- table.insert(terminal.menuItems, Menu.item(cmdInfo.cmd))
-	-- 			addUnique(cmdInfo.cmd)
-	-- 		end
-	-- 	end
-	-- end
 end
-
--- vim.api.nvim_create_user_command('PoptermAddCommand', function(opts)
---   print(opts.args)
--- end, { nargs = 1, complete='shellcmd' })
 
 return M
