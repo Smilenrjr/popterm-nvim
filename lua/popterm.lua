@@ -7,7 +7,7 @@ local Menu = require("nui.menu")
 -- ─── History ──────────────────────────────────────────────────────────────────
 
 ---@type string
-local historyPath = vim.fn.stdpath("data") .. "/runner-nvim/historyterm.json"
+local historyPath = vim.fn.stdpath("data") .. "/popterm-nvim/historyterm.json"
 
 local function saveHistory(data)
 	vim.fn.writefile({ vim.json.encode(data) }, historyPath)
@@ -47,7 +47,7 @@ end
 -- ─── Save Commands ────────────────────────────────────────────────────────────
 
 ---@type string
-local cmdPath = vim.fn.stdpath("data") .. "/runner-nvim/commandterm.json"
+local cmdPath = vim.fn.stdpath("data") .. "/popterm-nvim/commandterm.json"
 
 local function saveCommand(data)
 	vim.fn.writefile({ vim.json.encode(data) }, cmdPath)
