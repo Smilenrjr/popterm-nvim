@@ -2,12 +2,12 @@ local M = {}
 
 local Popup = require("nui.popup")
 local Layout = require("nui.layout")
-local event = require("nui.utils.autocmd").event
+local Menu = require("nui.menu")
 
 -- ─── History ──────────────────────────────────────────────────────────────────
 
 ---@type string
-local historyPath = vim.fn.stdpath("data") .. "/popterm-nvim/history.json"
+local historyPath = vim.fn.stdpath("data") .. "/runner-nvim/historyterm.json"
 
 local function saveHistory(data)
 	vim.fn.writefile({ vim.json.encode(data) }, historyPath)
@@ -44,13 +44,58 @@ local function updateHistory(cmd)
 	saveHistory(data)
 end
 
+-- ─── Save Commands ────────────────────────────────────────────────────────────
+
+---@type string
+local cmdPath = vim.fn.stdpath("data") .. "/runner-nvim/commandterm.json"
+
+local function saveCommand(data)
+	vim.fn.writefile({ vim.json.encode(data) }, cmdPath)
+end
+
+local function readCommandList()
+	local ok, lines = pcall(vim.fn.readfile, cmdPath)
+	if not ok or #lines == 0 then
+		return {}
+	end
+	return vim.json.decode(lines[1])
+end
+
+local function addCommandList(cmd)
+	local data = readCommandList()
+	data[cmd] = 1
+	saveCommand(data)
+end
+
+local function removeCommandList(cmd)
+	local data = readCommandList()
+	data[cmd] = nil
+	saveCommand(data)
+end
+
+-- local function addUnique(tbl, val)
+-- 	if not tbl[val] then
+-- 		table.insert(tbl, Menu.item(val))
+-- 		tbl[val] = true
+-- 	end
+-- end
+
+local function readCommands(tbl)
+	local data = readCommandList()
+	for cmd, _ in pairs(data) do
+		table.insert(tbl, Menu.item(cmd))
+	end
+end
+
 -- ─── Terminal ─────────────────────────────────────────────────────────────────
 
 ---@class Terminal
 ---@field terminal_popup any   nui Popup — the main shell panel
 ---@field input_popup    any   nui Popup — the command input bar
+---@field menu_popup     any   nui Popup — the command menu bar
 ---@field layout         any   nui Layout — manages sizing of both panels
 ---@field jobId          integer?
+---@field menuItems	 table
 local Terminal = {}
 Terminal.__index = Terminal
 
@@ -59,8 +104,10 @@ function Terminal:new()
 	return setmetatable({
 		terminal_popup = nil,
 		input_popup = nil,
+		menu_popup = nil,
 		layout = nil,
 		jobId = nil,
+		menuItems = {},
 	}, Terminal)
 end
 
@@ -99,6 +146,32 @@ function Terminal:init()
 		buf_options = { modifiable = true },
 	})
 
+	self.menu_popup = Menu({
+		focusable = true,
+		border = {
+			style = "rounded",
+			text = {
+				top = " Command List ",
+				top_align = "center",
+			},
+		},
+		win_options = {
+			winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
+		},
+		-- buf_options = { modifiable = true },
+	}, {
+		lines = self.menuItems,
+		max_width = 20,
+		keymap = {
+			focus_next = { "j", "<Down>", "<Tab>" },
+			focus_prev = { "k", "<Up>", "<S-Tab>" },
+			close = { "<Esc>", "<C-c>" },
+		},
+		on_close = function()
+			print("Menu Closed!")
+		end,
+	})
+
 	self.layout = Layout(
 		{
 			relative = "editor",
@@ -106,37 +179,49 @@ function Terminal:init()
 			size = { width = "80%", height = "80%" },
 		},
 		Layout.Box({
-			Layout.Box(self.terminal_popup, { size = "85%" }),
-			Layout.Box(self.input_popup, { size = "15%" }),
-		}, { dir = "col" })
+			Layout.Box(self.menu_popup, { size = "20%" }),
+			Layout.Box({
+				Layout.Box(self.terminal_popup, { size = "85%" }),
+				Layout.Box(self.input_popup, { size = "15%" }),
+			}, { dir = "col", size = "80%" }),
+		}, { dir = "row" })
 	)
 
-	self.layout:mount()
+	-- self.layout:mount()
 
 	self:_initTerminal()
 	self:_initInput()
+	self:_initMenu()
 end
 
 -- Starts the shell job inside the terminal popup and sets up its keymaps.
 function Terminal:_initTerminal()
+	local buffer_dir = vim.fn.expand('%:p:h')
+	self.layout:mount()
 	vim.api.nvim_set_current_win(self.terminal_popup.winid)
 
-	self.jobId = vim.fn.termopen({ vim.o.shell, "-i" }, {
+	-- self.jobId = vim.fn.termopen({ vim.o.shell, "-i" }, {
+	-- 	on_exit = function()
+	-- 		self:destroy()
+	-- 	end,
+	-- 	cwd = getCwd(),
+	-- })
+
+	self.jobId = vim.fn.jobstart({ vim.o.shell, "-i" }, {
+		cwd = buffer_dir,
+		term = true,
 		on_exit = function()
 			self:destroy()
 		end,
 	})
 
-	vim.fn.jobresize(
-		self.jobId,
-		vim.api.nvim_win_get_width(self.terminal_popup.winid),
-		vim.api.nvim_win_get_height(self.terminal_popup.winid)
-	)
+	-- vim.fn.jobresize(
+	-- 	self.jobId,
+	-- 	vim.api.nvim_win_get_width(self.terminal_popup.winid),
+	-- 	vim.api.nvim_win_get_height(self.terminal_popup.winid)
+	-- )
 
 	vim.cmd("startinsert")
-
-	-- cd into the cwd we launched from
-	self:_send("cd " .. getCwd())
 
 	-- q closes everything from the terminal panel (normal mode)
 	self.terminal_popup:map("n", "q", function()
@@ -200,8 +285,54 @@ function Terminal:_initInput()
 	end
 
 	self.input_popup:map("i", "<C-w>", cancel, { noremap = true, silent = true })
+	self.input_popup:map("i", "<C-a>", function()
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+		vim.api.nvim_set_current_win(self.menu_popup.winid)
+	end, { noremap = true, silent = true })
 	self.input_popup:map("n", "q", function() self:destroy() end, { noremap = true, silent = true })
 	self.input_popup:map("i", "<C-q>", function() self:destroy() end, { noremap = true, silent = true })
+
+
+	local menuHidden = false
+	self.input_popup:map("i", "<C-h>", function()
+		if menuHidden == false then
+			self.layout:update(
+				Layout.Box({
+					Layout.Box(self.terminal_popup, { size = "85%" }),
+					Layout.Box(self.input_popup, { size = "15%" }),
+				}, { dir = "col" }))
+			menuHidden = true
+		else
+			self.layout:update(
+				Layout.Box({
+					Layout.Box(self.menu_popup, { size = "20%" }),
+					Layout.Box({
+						Layout.Box(self.terminal_popup, { size = "85%" }),
+						Layout.Box(self.input_popup, { size = "15%" }),
+					}, { dir = "col", size = "80%" }),
+				}, { dir = "row" }))
+			vim.api.nvim_set_current_win(self.input_popup.winid)
+			vim.schedule(function()
+				vim.cmd("startinsert")
+			end)
+			menuHidden = false
+		end
+	end, { noremap = true, silent = true })
+end
+
+function Terminal:_initMenu()
+	self.menu_popup:map("n", "<CR>", function()
+		self:_send(self.menu_popup.tree:get_node().text)
+	end, { noremap = true, silent = true })
+	self.menu_popup:map("n", "<C-q>", function() self:destroy() end, { noremap = true, silent = true })
+
+	-- Cntl-s to move to input box from terminal insert mode
+	self.menu_popup:map("n", "<C-d>", function()
+		vim.api.nvim_set_current_win(self.input_popup.winid)
+		vim.schedule(function()
+			vim.cmd("startinsert")
+		end)
+	end, { noremap = true, silent = true })
 end
 
 -- Low-level: send raw text to the running shell job.
@@ -210,13 +341,15 @@ function Terminal:_send(cmd)
 	if not self.jobId then
 		return
 	end
-	vim.fn.jobresize(
-		self.jobId,
-		vim.api.nvim_win_get_width(self.terminal_popup.winid),
-		vim.api.nvim_win_get_height(self.terminal_popup.winid)
-	)
+
+	-- vim.fn.jobresize(
+	-- 	self.jobId,
+	-- 	vim.api.nvim_win_get_width(self.terminal_popup.winid),
+	-- 	vim.api.nvim_win_get_height(self.terminal_popup.winid)
+	-- )
+
 	-- clear terminal before every new command
-	vim.api.nvim_chan_send(self.jobId, "clear\r")
+	-- vim.api.nvim_chan_send(self.jobId, "clear\r")
 	vim.api.nvim_chan_send(self.jobId, cmd .. "\r")
 end
 
@@ -274,13 +407,13 @@ function Terminal:toggle()
 	end
 
 	local term_win_valid = self.terminal_popup.winid
-		and vim.api.nvim_win_is_valid(self.terminal_popup.winid)
+	    and vim.api.nvim_win_is_valid(self.terminal_popup.winid)
 
 	if not term_win_valid then
 		-- Popups are hidden — show them
 		self:show()
 	elseif vim.api.nvim_get_current_win() == self.terminal_popup.winid
-		or vim.api.nvim_get_current_win() == self.input_popup.winid
+	    or vim.api.nvim_get_current_win() == self.input_popup.winid
 	then
 		-- We're inside the terminal UI — hide it
 		self:hide()
@@ -335,10 +468,52 @@ function M.setup(opts)
 	opts = opts or {}
 	terminal = Terminal:new()
 
+	vim.api.nvim_create_user_command('PoptermAddCommand', function(opt)
+		table.insert(terminal.menuItems, Menu.item(opt.args))
+		addCommandList(opt.args)
+	end, { nargs = 1, complete = 'shellcmd' })
+
+	vim.api.nvim_create_user_command('PoptermRemoveCommand', function(opt)
+		-- table.insert(terminal.menuItems, Menu.item(opt.args))
+		removeCommandList(opt.args)
+		terminal.menuItems = {}
+		readCommands(terminal.menuItems)
+	end, { nargs = 1, complete = 'shellcmd' })
+
 	if vim.fn.filereadable(historyPath) == 0 then
 		vim.fn.mkdir(vim.fn.fnamemodify(historyPath, ":h"), "p")
 		saveHistory({})
 	end
+
+	if vim.fn.filereadable(cmdPath) == 0 then
+		vim.fn.mkdir(vim.fn.fnamemodify(cmdPath, ":h"), "p")
+		saveCommand({})
+	end
+
+	readCommands(terminal.menuItems)
+
+	-- local lookup = {}
+	-- local function addUnique(value)
+	-- 	if not lookup[value] then
+	-- 		table.insert(terminal.menuItems, Menu.item(value))
+	-- 		lookup[value] = true
+	-- 	end
+	-- end
+
+	-- local ok, lines = pcall(vim.fn.readfile, historyPath)
+	-- if ok or #lines ~= 0 then
+	-- 	local data = vim.json.decode(lines[1]) or {}
+	-- 	for cwd, cmdInfo in pairs(data) do
+	-- 		if cmdInfo and cmdInfo.cmd then
+	-- 			-- table.insert(terminal.menuItems, Menu.item(cmdInfo.cmd))
+	-- 			addUnique(cmdInfo.cmd)
+	-- 		end
+	-- 	end
+	-- end
 end
+
+-- vim.api.nvim_create_user_command('PoptermAddCommand', function(opts)
+--   print(opts.args)
+-- end, { nargs = 1, complete='shellcmd' })
 
 return M
